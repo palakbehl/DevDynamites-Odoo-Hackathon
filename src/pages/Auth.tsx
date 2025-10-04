@@ -9,7 +9,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Brain, Shield, Zap, User, Building, Globe, DollarSign } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import LanguageSelector from "@/components/LanguageSelector";
+
 
 const Auth = () => {
   const [searchParams] = useSearchParams();
@@ -111,41 +111,41 @@ const Auth = () => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary/10 via-background to-secondary/20 p-4">
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-900 via-green-900 to-black p-4">
       <div className="w-full max-w-md">
         <div className="flex justify-between items-center mb-6">
           <div className="text-center">
             <div className="flex items-center justify-center space-x-3 mb-4">
-              <div className="w-12 h-12 bg-primary rounded-lg flex items-center justify-center">
+              <div className="w-12 h-12 bg-gradient-to-r from-green-500 to-emerald-600 rounded-lg flex items-center justify-center">
                 <span className="text-white font-bold text-2xl">S</span>
               </div>
-              <h1 className="text-3xl font-bold">SmartExpense</h1>
+              <h1 className="text-3xl font-bold bg-gradient-to-r from-green-400 to-emerald-500 bg-clip-text text-transparent">
+                SmartExpense
+              </h1>
             </div>
-            <p className="text-muted-foreground">
+            <p className="text-gray-400">
               AI-Powered Expense Management & Reimbursement Platform
             </p>
           </div>
-          <div className="flex items-center space-x-2">
-            <LanguageSelector />
-          </div>
+          {/* Removed LanguageSelector */}
         </div>
         
-        <Card>
+        <Card className="bg-gray-800/30 backdrop-blur-sm border border-gray-700">
           <CardHeader>
-            <CardTitle className="text-2xl flex items-center justify-center">
+            <CardTitle className="text-2xl flex items-center justify-center text-white">
               {mode === "signup" ? (
                 <>
-                  <Brain className="mr-2 h-6 w-6" />
+                  <Brain className="mr-2 h-6 w-6 text-green-400" />
                   Create Your Account
                 </>
               ) : (
                 <>
-                  <Shield className="mr-2 h-6 w-6" />
+                  <Shield className="mr-2 h-6 w-6 text-green-400" />
                   Sign In to Your Account
                 </>
               )}
             </CardTitle>
-            <CardDescription className="text-center">
+            <CardDescription className="text-center text-gray-400">
               {mode === "signup" 
                 ? "Join thousands of companies streamlining their expense processes" 
                 : "Welcome back! Please enter your details"}
@@ -153,16 +153,18 @@ const Auth = () => {
           </CardHeader>
           <CardContent>
             <Tabs defaultValue={mode} onValueChange={() => {}}>
-              <TabsList className="grid w-full grid-cols-2">
+              <TabsList className="grid w-full grid-cols-2 bg-gray-700">
                 <TabsTrigger 
                   value="signin" 
                   onClick={() => navigate("/auth?mode=signin")}
+                  className="data-[state=active]:bg-green-700 data-[state=active]:text-white"
                 >
                   Sign In
                 </TabsTrigger>
                 <TabsTrigger 
                   value="signup" 
                   onClick={() => navigate("/auth?mode=signup")}
+                  className="data-[state=active]:bg-green-700 data-[state=active]:text-white"
                 >
                   Sign Up
                 </TabsTrigger>
@@ -171,7 +173,7 @@ const Auth = () => {
               <TabsContent value="signin">
                 <form onSubmit={handleSignIn} className="space-y-4">
                   <div className="space-y-2">
-                    <Label htmlFor="signin-email">Email</Label>
+                    <Label htmlFor="signin-email" className="text-gray-300">Email</Label>
                     <Input
                       id="signin-email"
                       type="email"
@@ -179,10 +181,11 @@ const Auth = () => {
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
                       required
+                      className="bg-gray-700/50 border-gray-600 text-white placeholder-gray-400"
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="signin-password">Password</Label>
+                    <Label htmlFor="signin-password" className="text-gray-300">Password</Label>
                     <Input
                       id="signin-password"
                       type="password"
@@ -190,79 +193,44 @@ const Auth = () => {
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       required
+                      className="bg-gray-700/50 border-gray-600 text-white placeholder-gray-400"
                     />
                   </div>
-                  <Button type="submit" className="w-full" disabled={loading}>
+                  <Button 
+                    type="submit" 
+                    className="w-full bg-gradient-to-r from-green-600 to-emerald-700 hover:from-green-700 hover:to-emerald-800"
+                    disabled={loading}
+                  >
                     {loading ? (
                       <span className="flex items-center justify-center">
                         <Zap className="mr-2 h-4 w-4 animate-spin" />
                         Signing in...
                       </span>
                     ) : (
-                      "Sign In"
+                      <>
+                        <Shield className="mr-2 h-4 w-4" />
+                        Sign In
+                      </>
                     )}
                   </Button>
                 </form>
-                
-                <div className="mt-4 text-center text-sm text-muted-foreground">
-                  <p>Access your dashboard based on your assigned role</p>
-                </div>
               </TabsContent>
               
               <TabsContent value="signup">
                 <form onSubmit={handleSignUp} className="space-y-4">
                   <div className="space-y-2">
-                    <Label htmlFor="fullname">Full Name</Label>
+                    <Label htmlFor="signup-fullname" className="text-gray-300">Full Name</Label>
                     <Input
-                      id="fullname"
-                      type="text"
+                      id="signup-fullname"
                       placeholder="John Doe"
                       value={fullName}
                       onChange={(e) => setFullName(e.target.value)}
                       required
+                      className="bg-gray-700/50 border-gray-600 text-white placeholder-gray-400"
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="company">Company Name</Label>
-                    <Input
-                      id="company"
-                      type="text"
-                      placeholder="Acme Corp"
-                      value={companyName}
-                      onChange={(e) => setCompanyName(e.target.value)}
-                      required
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="country">Country</Label>
-                      <Input
-                        id="country"
-                        type="text"
-                        placeholder="United States"
-                        value={country}
-                        onChange={(e) => setCountry(e.target.value)}
-                        required
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="currency">Currency</Label>
-                      <Select value={currency} onValueChange={setCurrency}>
-                        <SelectTrigger id="currency">
-                          <SelectValue placeholder="Select currency" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {currencies.map((curr) => (
-                            <SelectItem key={curr.code} value={curr.code}>
-                              {curr.code} - {curr.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="signup-email">Email</Label>
+                    <Label htmlFor="signup-email" className="text-gray-300">Email</Label>
                     <Input
                       id="signup-email"
                       type="email"
@@ -270,10 +238,11 @@ const Auth = () => {
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
                       required
+                      className="bg-gray-700/50 border-gray-600 text-white placeholder-gray-400"
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="signup-password">Password</Label>
+                    <Label htmlFor="signup-password" className="text-gray-300">Password</Label>
                     <Input
                       id="signup-password"
                       type="password"
@@ -281,41 +250,74 @@ const Auth = () => {
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       required
-                      minLength={6}
+                      className="bg-gray-700/50 border-gray-600 text-white placeholder-gray-400"
                     />
                   </div>
-                  <Button type="submit" className="w-full" disabled={loading}>
+                  <div className="space-y-2">
+                    <Label htmlFor="signup-company" className="text-gray-300">Company Name</Label>
+                    <Input
+                      id="signup-company"
+                      placeholder="Acme Inc."
+                      value={companyName}
+                      onChange={(e) => setCompanyName(e.target.value)}
+                      required
+                      className="bg-gray-700/50 border-gray-600 text-white placeholder-gray-400"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="signup-country" className="text-gray-300">Country</Label>
+                      <Input
+                        id="signup-country"
+                        placeholder="United States"
+                        value={country}
+                        onChange={(e) => setCountry(e.target.value)}
+                        required
+                        className="bg-gray-700/50 border-gray-600 text-white placeholder-gray-400"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="signup-currency" className="text-gray-300">Currency</Label>
+                      <Select value={currency} onValueChange={setCurrency}>
+                        <SelectTrigger className="bg-gray-700/50 border-gray-600 text-white">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="bg-gray-700 border-gray-600">
+                          {currencies.map((curr) => (
+                            <SelectItem 
+                              key={curr.code} 
+                              value={curr.code}
+                              className="text-white hover:bg-gray-600"
+                            >
+                              {curr.code} - {curr.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <Button 
+                    type="submit" 
+                    className="w-full bg-gradient-to-r from-green-600 to-emerald-700 hover:from-green-700 hover:to-emerald-800"
+                    disabled={loading}
+                  >
                     {loading ? (
                       <span className="flex items-center justify-center">
                         <Zap className="mr-2 h-4 w-4 animate-spin" />
                         Creating account...
                       </span>
                     ) : (
-                      "Create Account"
+                      <>
+                        <Brain className="mr-2 h-4 w-4" />
+                        Create Account
+                      </>
                     )}
                   </Button>
                 </form>
-                
-                <div className="mt-4 text-center text-sm text-muted-foreground">
-                  <p>First user becomes Admin automatically</p>
-                </div>
               </TabsContent>
             </Tabs>
           </CardContent>
         </Card>
-        
-        <div className="mt-6 text-center text-sm text-muted-foreground">
-          <p>
-            By continuing, you agree to our{" "}
-            <a href="#" className="text-primary hover:underline">
-              Terms of Service
-            </a>{" "}
-            and{" "}
-            <a href="#" className="text-primary hover:underline">
-              Privacy Policy
-            </a>
-          </p>
-        </div>
       </div>
     </div>
   );

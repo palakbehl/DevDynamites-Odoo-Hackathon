@@ -323,6 +323,12 @@ class ApiClient {
     });
   }
 
+  async deleteApprovalChain(id: string): Promise<ApiResponse<void>> {
+    return this.request<void>(`/approval-chains/${id}`, {
+      method: 'DELETE',
+    });
+  }
+
   // Approval rules methods
   async getApprovalRules(): Promise<ApiResponse<ApprovalRule[]>> {
     return this.request<ApprovalRule[]>('/approval-rules');

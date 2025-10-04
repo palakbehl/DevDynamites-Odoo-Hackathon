@@ -3,6 +3,7 @@ import { apiClient } from "@/integrations/api/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { DollarSign, Clock, CheckCircle, Users, TrendingUp } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import ManagerApprovals from "@/components/ManagerApprovals";
 
 interface Expense {
   id: string;

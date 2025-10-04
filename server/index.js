@@ -2,13 +2,28 @@ const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { Pool } = require('pg');
+const mongoose = require('mongoose');
 const multer = require('multer');
 const path = require('path');
+const nodemailer = require('nodemailer');
 require('dotenv').config();
 
+// Import models
+const User = require('./models/User');
+const Company = require('./models/Company');
+const Expense = require('./models/Expense');
+const ExpenseCategory = require('./models/ExpenseCategory');
+const ManagerRelationship = require('./models/ManagerRelationship');
+const ExpenseApproval = require('./models/ExpenseApproval');
+const ApprovalChain = require('./models/ApprovalChain');
+const ApprovalRule = require('./models/ApprovalRule');
+const ExpenseApprovalRule = require('./models/ExpenseApprovalRule');
+
+// Connect to MongoDB
+require('./config/db')();
+
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3003;
 
 // Configure multer for file uploads
 const storage = multer.diskStorage({
@@ -35,17 +50,18 @@ const upload = multer({
   }
 });
 
-// Database connection
-const pool = new Pool({
-  host: process.env.DB_HOST || 'localhost',
-  port: process.env.DB_PORT || 5432,
-  database: process.env.DB_NAME || 'expense_management',
-  user: process.env.DB_USER || 'postgres',
-  password: process.env.DB_PASSWORD || 'password',
-  ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
-});
-
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
+
+// Configure nodemailer for email sending
+const transporter = nodemailer.createTransport({
+  host: process.env.EMAIL_HOST || 'smtp.example.com',
+  port: process.env.EMAIL_PORT || 587,
+  secure: false, // true for 465, false for other ports
+  auth: {
+    user: process.env.EMAIL_USER || 'your-email@example.com',
+    pass: process.env.EMAIL_PASS || 'your-email-password',
+  },
+});
 
 // Middleware
 app.use(cors());
@@ -70,53 +86,67 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
+// Helper function to send emails
+const sendEmail = async (to, subject, html) => {
+  try {
+    await transporter.sendMail({
+      from: process.env.EMAIL_USER || 'your-email@example.com',
+      to,
+      subject,
+      html,
+    });
+    console.log('Email sent successfully to', to);
+  } catch (error) {
+    console.error('Error sending email:', error);
+  }
+};
+
 // Auth routes
 app.post('/api/auth/signup', async (req, res) => {
   try {
     const { email, password, fullName, companyName, country, currency } = req.body;
 
     // Check if user already exists
-    const existingUser = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
-    if (existingUser.rows.length > 0) {
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
       return res.status(400).json({ error: 'User already exists' });
     }
 
     // Create company first
-    const companyResult = await pool.query(
-      'INSERT INTO companies (name, country, default_currency) VALUES ($1, $2, $3) RETURNING *',
-      [companyName, country, currency]
-    );
-    const company = companyResult.rows[0];
+    const company = new Company({
+      name: companyName,
+      country,
+      default_currency: currency,
+    });
+    await company.save();
 
     // Hash password and create user
     const passwordHash = await bcrypt.hash(password, 10);
-    const userResult = await pool.query(
-      'INSERT INTO users (email, password_hash, full_name, company_id) VALUES ($1, $2, $3, $4) RETURNING *',
-      [email, passwordHash, fullName, company.id]
-    );
-    const user = userResult.rows[0];
-
-    // Create admin role
-    await pool.query(
-      'INSERT INTO user_roles (user_id, role, company_id) VALUES ($1, $2, $3)',
-      [user.id, 'admin', company.id]
-    );
+    const user = new User({
+      email,
+      password_hash: passwordHash,
+      full_name: fullName,
+      company_id: company._id,
+      role: 'admin', // First user is admin
+    });
+    await user.save();
 
     // Create default expense categories
     const categories = ['Travel', 'Meals', 'Office Supplies', 'Entertainment', 'Transportation', 'Lodging'];
     for (const categoryName of categories) {
-      await pool.query(
-        'INSERT INTO expense_categories (name, company_id) VALUES ($1, $2)',
-        [categoryName, company.id]
-      );
+      const category = new ExpenseCategory({
+        name: categoryName,
+        company_id: company._id,
+      });
+      await category.save();
     }
 
     // Generate JWT token
-    const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '7d' });
+    const token = jwt.sign({ userId: user._id }, JWT_SECRET, { expiresIn: '7d' });
 
     res.json({
       user: {
-        id: user.id,
+        id: user._id,
         email: user.email,
         full_name: user.full_name,
         company_id: user.company_id,
@@ -137,12 +167,10 @@ app.post('/api/auth/signin', async (req, res) => {
     const { email, password } = req.body;
 
     // Find user
-    const userResult = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
-    if (userResult.rows.length === 0) {
+    const user = await User.findOne({ email });
+    if (!user) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
-
-    const user = userResult.rows[0];
 
     // Verify password
     const isValidPassword = await bcrypt.compare(password, user.password_hash);
@@ -150,16 +178,12 @@ app.post('/api/auth/signin', async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // Get user role
-    const roleResult = await pool.query('SELECT role FROM user_roles WHERE user_id = $1', [user.id]);
-    const role = roleResult.rows[0]?.role || 'employee';
-
     // Generate JWT token
-    const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '7d' });
+    const token = jwt.sign({ userId: user._id }, JWT_SECRET, { expiresIn: '7d' });
 
     res.json({
       user: {
-        id: user.id,
+        id: user._id,
         email: user.email,
         full_name: user.full_name,
         company_id: user.company_id,
@@ -167,7 +191,7 @@ app.post('/api/auth/signin', async (req, res) => {
         updated_at: user.updated_at,
       },
       token,
-      role,
+      role: user.role,
     });
   } catch (error) {
     console.error('Signin error:', error);
@@ -177,25 +201,19 @@ app.post('/api/auth/signin', async (req, res) => {
 
 app.get('/api/auth/me', authenticateToken, async (req, res) => {
   try {
-    const userResult = await pool.query('SELECT * FROM users WHERE id = $1', [req.user.userId]);
-    if (userResult.rows.length === 0) {
+    const user = await User.findById(req.user.userId);
+    if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    const user = userResult.rows[0];
-
-    // Get user role
-    const roleResult = await pool.query('SELECT role FROM user_roles WHERE user_id = $1', [user.id]);
-    const role = roleResult.rows[0]?.role || 'employee';
-
     res.json({
-      id: user.id,
+      id: user._id,
       email: user.email,
       full_name: user.full_name,
       company_id: user.company_id,
       created_at: user.created_at,
       updated_at: user.updated_at,
-      role,
+      role: user.role,
     });
   } catch (error) {
     console.error('Get user error:', error);
@@ -207,27 +225,15 @@ app.get('/api/auth/me', authenticateToken, async (req, res) => {
 app.get('/api/users', authenticateToken, async (req, res) => {
   try {
     // Get current user's company
-    const userResult = await pool.query('SELECT company_id FROM users WHERE id = $1', [req.user.userId]);
-    const companyId = userResult.rows[0].company_id;
+    const currentUser = await User.findById(req.user.userId);
+    if (!currentUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
 
     // Get all users in the same company
-    const usersResult = await pool.query(
-      'SELECT id, email, full_name, company_id, created_at, updated_at FROM users WHERE company_id = $1',
-      [companyId]
-    );
+    const users = await User.find({ company_id: currentUser.company_id });
 
-    // Get roles for each user
-    const usersWithRoles = await Promise.all(
-      usersResult.rows.map(async (user) => {
-        const roleResult = await pool.query('SELECT role FROM user_roles WHERE user_id = $1', [user.id]);
-        return {
-          ...user,
-          role: roleResult.rows[0]?.role || 'employee',
-        };
-      })
-    );
-
-    res.json(usersWithRoles);
+    res.json(users);
   } catch (error) {
     console.error('Get users error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -239,31 +245,46 @@ app.post('/api/users', authenticateToken, async (req, res) => {
     const { email, password, fullName, role } = req.body;
 
     // Get current user's company
-    const userResult = await pool.query('SELECT company_id FROM users WHERE id = $1', [req.user.userId]);
-    const companyId = userResult.rows[0].company_id;
+    const currentUser = await User.findById(req.user.userId);
+    if (!currentUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
 
     // Check if user already exists
-    const existingUser = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
-    if (existingUser.rows.length > 0) {
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
       return res.status(400).json({ error: 'User already exists' });
     }
 
+    // Generate a temporary password if not provided
+    const tempPassword = password || Math.random().toString(36).slice(-8);
+    
     // Hash password and create user
-    const passwordHash = await bcrypt.hash(password, 10);
-    const newUserResult = await pool.query(
-      'INSERT INTO users (email, password_hash, full_name, company_id) VALUES ($1, $2, $3, $4) RETURNING *',
-      [email, passwordHash, fullName, companyId]
-    );
-    const newUser = newUserResult.rows[0];
+    const passwordHash = await bcrypt.hash(tempPassword, 10);
+    const newUser = new User({
+      email,
+      password_hash: passwordHash,
+      full_name: fullName,
+      company_id: currentUser.company_id,
+      role,
+    });
+    await newUser.save();
 
-    // Create user role
-    await pool.query(
-      'INSERT INTO user_roles (user_id, role, company_id) VALUES ($1, $2, $3)',
-      [newUser.id, role, companyId]
-    );
+    // Send email with credentials
+    const emailHtml = `
+      <h2>Welcome to SmartExpense</h2>
+      <p>Hello ${fullName},</p>
+      <p>An admin has created an account for you. Here are your login credentials:</p>
+      <p><strong>Email:</strong> ${email}</p>
+      <p><strong>Password:</strong> ${tempPassword}</p>
+      <p>Please log in and change your password for security.</p>
+      <p><a href="http://localhost:3000/auth?mode=signin">Login to your account</a></p>
+    `;
+    
+    await sendEmail(email, 'SmartExpense Account Created', emailHtml);
 
     res.json({
-      id: newUser.id,
+      id: newUser._id,
       email: newUser.email,
       full_name: newUser.full_name,
       company_id: newUser.company_id,
@@ -279,15 +300,15 @@ app.post('/api/users', authenticateToken, async (req, res) => {
 // Expense routes
 app.get('/api/expenses', authenticateToken, async (req, res) => {
   try {
-    const userResult = await pool.query('SELECT company_id FROM users WHERE id = $1', [req.user.userId]);
-    const companyId = userResult.rows[0].company_id;
+    const currentUser = await User.findById(req.user.userId);
+    if (!currentUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
 
-    const expensesResult = await pool.query(
-      'SELECT * FROM expenses WHERE company_id = $1 ORDER BY created_at DESC',
-      [companyId]
-    );
+    const expenses = await Expense.find({ company_id: currentUser.company_id })
+      .sort({ created_at: -1 });
 
-    res.json(expensesResult.rows);
+    res.json(expenses);
   } catch (error) {
     console.error('Get expenses error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -298,17 +319,30 @@ app.post('/api/expenses', authenticateToken, async (req, res) => {
   try {
     const { category_id, amount, original_amount, original_currency, company_currency, description, expense_date } = req.body;
 
-    const userResult = await pool.query('SELECT company_id FROM users WHERE id = $1', [req.user.userId]);
-    const companyId = userResult.rows[0].company_id;
+    const currentUser = await User.findById(req.user.userId);
+    if (!currentUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
 
-    const expenseResult = await pool.query(
-      `INSERT INTO expenses (user_id, company_id, category_id, amount, original_amount, 
-       original_currency, company_currency, description, expense_date, status) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
-      [req.user.userId, companyId, category_id, amount, original_amount, original_currency, company_currency, description, expense_date, 'pending']
-    );
+    const expense = new Expense({
+      user_id: currentUser._id,
+      company_id: currentUser.company_id,
+      category_id,
+      amount,
+      original_amount,
+      original_currency,
+      company_currency,
+      description,
+      expense_date,
+      status: 'pending'
+    });
 
-    res.json(expenseResult.rows[0]);
+    await expense.save();
+
+    // Create approval workflow
+    await createApprovalWorkflow(expense, currentUser);
+
+    res.json(expense);
   } catch (error) {
     console.error('Create expense error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -317,15 +351,17 @@ app.post('/api/expenses', authenticateToken, async (req, res) => {
 
 app.get('/api/expenses/pending', authenticateToken, async (req, res) => {
   try {
-    const userResult = await pool.query('SELECT company_id FROM users WHERE id = $1', [req.user.userId]);
-    const companyId = userResult.rows[0].company_id;
+    const currentUser = await User.findById(req.user.userId);
+    if (!currentUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
 
-    const expensesResult = await pool.query(
-      'SELECT * FROM expenses WHERE company_id = $1 AND status = $2 ORDER BY created_at DESC',
-      [companyId, 'pending']
-    );
+    const expenses = await Expense.find({ 
+      company_id: currentUser.company_id, 
+      status: 'pending' 
+    }).sort({ created_at: -1 });
 
-    res.json(expensesResult.rows);
+    res.json(expenses);
   } catch (error) {
     console.error('Get pending expenses error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -336,18 +372,31 @@ app.get('/api/expenses/pending', authenticateToken, async (req, res) => {
 app.get('/api/expenses/pending-for-approver', authenticateToken, async (req, res) => {
   try {
     // Get expenses that need approval from this user
-    const expensesResult = await pool.query(
-      `SELECT e.*, u.full_name as submitter_name, ec.name as category_name
-       FROM expenses e
-       JOIN users u ON e.user_id = u.id
-       LEFT JOIN expense_categories ec ON e.category_id = ec.id
-       JOIN expense_approvals ea ON e.id = ea.expense_id
-       WHERE ea.approver_id = $1 AND ea.status = 'pending'
-       ORDER BY e.created_at DESC`,
-      [req.user.userId]
-    );
+    const approvals = await ExpenseApproval.find({ 
+      approver_id: req.user.userId, 
+      status: 'pending' 
+    }).populate({
+      path: 'expense_id',
+      populate: [
+        { path: 'user_id', select: 'full_name email' },
+        { path: 'category_id', select: 'name' }
+      ]
+    });
 
-    res.json(expensesResult.rows);
+    // Map approvals to include full expense details with user and category info
+    const expenses = approvals.map(approval => {
+      const expense = approval.expense_id;
+      return {
+        ...expense.toObject(),
+        full_name: expense.user_id ? expense.user_id.full_name : 'Unknown User',
+        category: expense.category_id ? expense.category_id.name : 'General',
+        approval_id: approval._id,
+        approval_status: approval.status,
+        approval_sequence: approval.sequence_order
+      };
+    });
+
+    res.json(expenses);
   } catch (error) {
     console.error('Get pending expenses for approver error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -357,15 +406,15 @@ app.get('/api/expenses/pending-for-approver', authenticateToken, async (req, res
 // Get approval chain for a company
 app.get('/api/approval-chains', authenticateToken, async (req, res) => {
   try {
-    const userResult = await pool.query('SELECT company_id FROM users WHERE id = $1', [req.user.userId]);
-    const companyId = userResult.rows[0].company_id;
+    const currentUser = await User.findById(req.user.userId);
+    if (!currentUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
 
-    const chainsResult = await pool.query(
-      'SELECT * FROM approval_chains WHERE company_id = $1 ORDER BY sequence_order',
-      [companyId]
-    );
+    const chains = await ApprovalChain.find({ company_id: currentUser.company_id })
+      .sort({ sequence_order: 1 });
 
-    res.json(chainsResult.rows);
+    res.json(chains);
   } catch (error) {
     console.error('Get approval chains error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -377,17 +426,41 @@ app.post('/api/approval-chains', authenticateToken, async (req, res) => {
   try {
     const { approverRole, sequenceOrder } = req.body;
     
-    const userResult = await pool.query('SELECT company_id FROM users WHERE id = $1', [req.user.userId]);
-    const companyId = userResult.rows[0].company_id;
+    const currentUser = await User.findById(req.user.userId);
+    if (!currentUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
 
-    const chainResult = await pool.query(
-      'INSERT INTO approval_chains (company_id, approver_role, sequence_order) VALUES ($1, $2, $3) RETURNING *',
-      [companyId, approverRole, sequenceOrder]
-    );
+    const chain = new ApprovalChain({
+      company_id: currentUser.company_id,
+      approver_role: approverRole,
+      sequence_order: sequenceOrder
+    });
 
-    res.json(chainResult.rows[0]);
+    await chain.save();
+
+    res.json(chain);
   } catch (error) {
     console.error('Create approval chain error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Delete approval chain
+app.delete('/api/approval-chains/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const currentUser = await User.findById(req.user.userId);
+    if (!currentUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    await ApprovalChain.findByIdAndDelete(id);
+
+    res.json({ message: 'Approval chain deleted' });
+  } catch (error) {
+    console.error('Delete approval chain error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -395,15 +468,14 @@ app.post('/api/approval-chains', authenticateToken, async (req, res) => {
 // Get manager relationships
 app.get('/api/manager-relationships', authenticateToken, async (req, res) => {
   try {
-    const userResult = await pool.query('SELECT company_id FROM users WHERE id = $1', [req.user.userId]);
-    const companyId = userResult.rows[0].company_id;
+    const currentUser = await User.findById(req.user.userId);
+    if (!currentUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
 
-    const relationshipsResult = await pool.query(
-      'SELECT * FROM manager_relationships WHERE company_id = $1',
-      [companyId]
-    );
+    const relationships = await ManagerRelationship.find({ company_id: currentUser.company_id });
 
-    res.json(relationshipsResult.rows);
+    res.json(relationships);
   } catch (error) {
     console.error('Get manager relationships error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -415,15 +487,20 @@ app.post('/api/manager-relationships', authenticateToken, async (req, res) => {
   try {
     const { employeeId, managerId } = req.body;
     
-    const userResult = await pool.query('SELECT company_id FROM users WHERE id = $1', [req.user.userId]);
-    const companyId = userResult.rows[0].company_id;
+    const currentUser = await User.findById(req.user.userId);
+    if (!currentUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
 
-    const relationshipResult = await pool.query(
-      'INSERT INTO manager_relationships (employee_id, manager_id, company_id) VALUES ($1, $2, $3) RETURNING *',
-      [employeeId, managerId, companyId]
-    );
+    const relationship = new ManagerRelationship({
+      employee_id: employeeId,
+      manager_id: managerId,
+      company_id: currentUser.company_id
+    });
 
-    res.json(relationshipResult.rows[0]);
+    await relationship.save();
+
+    res.json(relationship);
   } catch (error) {
     console.error('Create manager relationship error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -435,7 +512,7 @@ app.delete('/api/manager-relationships/:id', authenticateToken, async (req, res)
   try {
     const { id } = req.params;
 
-    await pool.query('DELETE FROM manager_relationships WHERE id = $1', [id]);
+    await ManagerRelationship.findByIdAndDelete(id);
 
     res.json({ message: 'Manager relationship deleted' });
   } catch (error) {
@@ -449,12 +526,10 @@ app.get('/api/expense-approvals/:expenseId', authenticateToken, async (req, res)
   try {
     const { expenseId } = req.params;
 
-    const approvalsResult = await pool.query(
-      'SELECT * FROM expense_approvals WHERE expense_id = $1 ORDER BY sequence_order',
-      [expenseId]
-    );
+    const approvals = await ExpenseApproval.find({ expense_id: expenseId })
+      .sort({ sequence_order: 1 });
 
-    res.json(approvalsResult.rows);
+    res.json(approvals);
   } catch (error) {
     console.error('Get expense approvals error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -468,80 +543,92 @@ app.patch('/api/expense-approvals/:id', authenticateToken, async (req, res) => {
     const { status, comments } = req.body;
 
     // Update the approval status
-    await pool.query(
-      'UPDATE expense_approvals SET status = $1, comments = $2, updated_at = NOW() WHERE id = $3',
-      [status, comments, id]
+    const approval = await ExpenseApproval.findByIdAndUpdate(
+      id,
+      { status, comments, updated_at: new Date() },
+      { new: true }
     );
 
+    if (!approval) {
+      return res.status(404).json({ error: 'Approval not found' });
+    }
+
     // Check if we need to move to the next approver or finalize the expense
-    const approvalResult = await pool.query('SELECT * FROM expense_approvals WHERE id = $1', [id]);
-    const approval = approvalResult.rows[0];
-    
-    const expenseResult = await pool.query('SELECT * FROM expenses WHERE id = $1', [approval.expense_id]);
-    const expense = expenseResult.rows[0];
+    const expense = await Expense.findById(approval.expense_id);
+    if (!expense) {
+      return res.status(404).json({ error: 'Expense not found' });
+    }
     
     // Get all approvals for this expense
-    const allApprovalsResult = await pool.query(
-      'SELECT * FROM expense_approvals WHERE expense_id = $1 ORDER BY sequence_order',
-      [expense.id]
-    );
-    const allApprovals = allApprovalsResult.rows;
+    const allApprovals = await ExpenseApproval.find({ expense_id: expense._id })
+      .sort({ sequence_order: 1 });
     
-    // Check if all approvals are completed
-    const allApproved = allApprovals.every(approval => approval.status === 'approved');
-    const anyRejected = allApprovals.some(approval => approval.status === 'rejected');
+    // Get approval rules for this expense
+    const expenseApprovalRules = await ExpenseApprovalRule.find({ expense_id: expense._id })
+      .populate('approval_rule_id');
     
-    // Check for conditional approval rules
-    const rulesResult = await pool.query(
-      `SELECT ar.* 
-       FROM approval_rules ar
-       JOIN expense_approval_rules ear ON ar.id = ear.approval_rule_id
-       WHERE ear.expense_id = $1`,
-      [expense.id]
-    );
-    const rules = rulesResult.rows;
+    // Check if any conditional rules apply
+    let shouldApprove = false;
+    let shouldReject = false;
     
-    // Check if any conditional rules are met
-    let conditionalApproved = false;
-    for (const rule of rules) {
-      if (rule.rule_type === 'specific_approver' && approval.approver_id === rule.specific_approver_id && status === 'approved') {
-        conditionalApproved = true;
-        break;
-      } else if (rule.rule_type === 'percentage') {
-        const approvedCount = allApprovals.filter(a => a.status === 'approved').length;
-        const percentage = (approvedCount / allApprovals.length) * 100;
-        if (percentage >= rule.percentage_threshold) {
-          conditionalApproved = true;
+    // Check each approval rule
+    for (const expenseRule of expenseApprovalRules) {
+      const rule = expenseRule.approval_rule_id;
+      if (!rule.is_active) continue;
+      
+      switch (rule.rule_type) {
+        case 'specific_approver':
+          // If specific approver approves, auto-approve
+          if (rule.specific_approver_id && rule.specific_approver_id.toString() === req.user.userId) {
+            shouldApprove = true;
+          }
           break;
-        }
-      } else if (rule.rule_type === 'hybrid') {
-        // Check if specific approver approved OR percentage threshold met
-        const specificApproved = rule.specific_approver_id && 
-          allApprovals.some(a => a.approver_id === rule.specific_approver_id && a.status === 'approved');
-        
-        const approvedCount = allApprovals.filter(a => a.status === 'approved').length;
-        const percentage = (approvedCount / allApprovals.length) * 100;
-        const percentageMet = percentage >= rule.percentage_threshold;
-        
-        if (specificApproved || percentageMet) {
-          conditionalApproved = true;
+        case 'percentage':
+          // Check if percentage threshold is met
+          if (rule.percentage_threshold) {
+            const approvedCount = allApprovals.filter(a => a.status === 'approved').length;
+            const totalApprovers = allApprovals.length;
+            const percentageApproved = (approvedCount / totalApprovers) * 100;
+            
+            if (percentageApproved >= rule.percentage_threshold) {
+              shouldApprove = true;
+            }
+          }
           break;
-        }
+        case 'hybrid':
+          // Check both percentage and specific approver
+          if (rule.specific_approver_id && rule.specific_approver_id.toString() === req.user.userId) {
+            shouldApprove = true;
+          } else if (rule.percentage_threshold) {
+            const approvedCount = allApprovals.filter(a => a.status === 'approved').length;
+            const totalApprovers = allApprovals.length;
+            const percentageApproved = (approvedCount / totalApprovers) * 100;
+            
+            if (percentageApproved >= rule.percentage_threshold) {
+              shouldApprove = true;
+            }
+          }
+          break;
       }
     }
     
-    if (allApproved || conditionalApproved) {
-      // All approvals completed or conditional rule met, mark expense as approved
-      await pool.query(
-        'UPDATE expenses SET status = $1, updated_at = NOW() WHERE id = $2',
-        ['approved', expense.id]
-      );
+    // Check if all approvals are completed (standard workflow)
+    const allApproved = allApprovals.every(approval => approval.status === 'approved');
+    const anyRejected = allApprovals.some(approval => approval.status === 'rejected');
+    
+    // Enhanced logic for conditional approvals
+    if (shouldApprove) {
+      // Conditional rule met, mark expense as approved
+      await Expense.findByIdAndUpdate(expense._id, { status: 'approved', updated_at: new Date() });
+    } else if (shouldReject) {
+      // Conditional rule for rejection met, mark expense as rejected
+      await Expense.findByIdAndUpdate(expense._id, { status: 'rejected', updated_at: new Date() });
+    } else if (allApproved) {
+      // All approvals completed in standard workflow, mark expense as approved
+      await Expense.findByIdAndUpdate(expense._id, { status: 'approved', updated_at: new Date() });
     } else if (anyRejected) {
-      // At least one rejection, mark expense as rejected
-      await pool.query(
-        'UPDATE expenses SET status = $1, updated_at = NOW() WHERE id = $2',
-        ['rejected', expense.id]
-      );
+      // At least one rejection in standard workflow, mark expense as rejected
+      await Expense.findByIdAndUpdate(expense._id, { status: 'rejected', updated_at: new Date() });
     } else {
       // Move to next approver if this was approved
       if (status === 'approved') {
@@ -566,15 +653,14 @@ app.patch('/api/expense-approvals/:id', authenticateToken, async (req, res) => {
 // Get approval rules for a company
 app.get('/api/approval-rules', authenticateToken, async (req, res) => {
   try {
-    const userResult = await pool.query('SELECT company_id FROM users WHERE id = $1', [req.user.userId]);
-    const companyId = userResult.rows[0].company_id;
+    const currentUser = await User.findById(req.user.userId);
+    if (!currentUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
 
-    const rulesResult = await pool.query(
-      'SELECT * FROM approval_rules WHERE company_id = $1',
-      [companyId]
-    );
+    const rules = await ApprovalRule.find({ company_id: currentUser.company_id });
 
-    res.json(rulesResult.rows);
+    res.json(rules);
   } catch (error) {
     console.error('Get approval rules error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -586,17 +672,22 @@ app.post('/api/approval-rules', authenticateToken, async (req, res) => {
   try {
     const { ruleType, percentageThreshold, specificApproverId, description } = req.body;
     
-    const userResult = await pool.query('SELECT company_id FROM users WHERE id = $1', [req.user.userId]);
-    const companyId = userResult.rows[0].company_id;
+    const currentUser = await User.findById(req.user.userId);
+    if (!currentUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
 
-    const ruleResult = await pool.query(
-      `INSERT INTO approval_rules 
-       (company_id, rule_type, percentage_threshold, specific_approver_id, description) 
-       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [companyId, ruleType, percentageThreshold, specificApproverId, description]
-    );
+    const rule = new ApprovalRule({
+      company_id: currentUser.company_id,
+      rule_type: ruleType,
+      percentage_threshold: percentageThreshold,
+      specific_approver_id: specificApproverId,
+      description
+    });
 
-    res.json(ruleResult.rows[0]);
+    await rule.save();
+
+    res.json(rule);
   } catch (error) {
     console.error('Create approval rule error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -609,15 +700,24 @@ app.patch('/api/approval-rules/:id', authenticateToken, async (req, res) => {
     const { id } = req.params;
     const { ruleType, percentageThreshold, specificApproverId, description, isActive } = req.body;
 
-    const ruleResult = await pool.query(
-      `UPDATE approval_rules 
-       SET rule_type = $1, percentage_threshold = $2, specific_approver_id = $3, 
-           description = $4, is_active = $5, updated_at = NOW()
-       WHERE id = $6 RETURNING *`,
-      [ruleType, percentageThreshold, specificApproverId, description, isActive, id]
+    const rule = await ApprovalRule.findByIdAndUpdate(
+      id,
+      {
+        rule_type: ruleType,
+        percentage_threshold: percentageThreshold,
+        specific_approver_id: specificApproverId,
+        description,
+        is_active: isActive,
+        updated_at: new Date()
+      },
+      { new: true }
     );
 
-    res.json(ruleResult.rows[0]);
+    if (!rule) {
+      return res.status(404).json({ error: 'Approval rule not found' });
+    }
+
+    res.json(rule);
   } catch (error) {
     console.error('Update approval rule error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -629,7 +729,7 @@ app.delete('/api/approval-rules/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
 
-    await pool.query('DELETE FROM approval_rules WHERE id = $1', [id]);
+    await ApprovalRule.findByIdAndDelete(id);
 
     res.json({ message: 'Approval rule deleted' });
   } catch (error) {
@@ -643,12 +743,14 @@ app.post('/api/expense-approval-rules', authenticateToken, async (req, res) => {
   try {
     const { expenseId, approvalRuleId } = req.body;
 
-    const linkResult = await pool.query(
-      'INSERT INTO expense_approval_rules (expense_id, approval_rule_id) VALUES ($1, $2) RETURNING *',
-      [expenseId, approvalRuleId]
-    );
+    const link = new ExpenseApprovalRule({
+      expense_id: expenseId,
+      approval_rule_id: approvalRuleId
+    });
 
-    res.json(linkResult.rows[0]);
+    await link.save();
+
+    res.json(link);
   } catch (error) {
     console.error('Link expense with approval rule error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -660,20 +762,83 @@ app.get('/api/expense-approval-rules/:expenseId', authenticateToken, async (req,
   try {
     const { expenseId } = req.params;
 
-    const rulesResult = await pool.query(
-      `SELECT ar.* 
-       FROM approval_rules ar
-       JOIN expense_approval_rules ear ON ar.id = ear.approval_rule_id
-       WHERE ear.expense_id = $1`,
-      [expenseId]
-    );
+    const rules = await ExpenseApprovalRule.find({ expense_id: expenseId })
+      .populate('approval_rule_id');
 
-    res.json(rulesResult.rows);
+    res.json(rules.map(rule => rule.approval_rule_id));
   } catch (error) {
     console.error('Get expense approval rules error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+// Helper function to create approval workflow
+async function createApprovalWorkflow(expense, currentUser) {
+  try {
+    // Get approval chain for the company
+    const approvalChains = await ApprovalChain.find({ company_id: currentUser.company_id })
+      .sort({ sequence_order: 1 });
+    
+    // Get manager relationship for this employee
+    const managerRelationship = await ManagerRelationship.findOne({ 
+      employee_id: currentUser._id, 
+      company_id: currentUser.company_id 
+    });
+    
+    // Get active approval rules for the company
+    const approvalRules = await ApprovalRule.find({ 
+      company_id: currentUser.company_id, 
+      is_active: true 
+    });
+    
+    // Link expense with approval rules
+    for (const rule of approvalRules) {
+      const expenseApprovalRule = new ExpenseApprovalRule({
+        expense_id: expense._id,
+        approval_rule_id: rule._id
+      });
+      
+      await expenseApprovalRule.save();
+    }
+    
+    // Create approval records for each approver in the chain
+    for (const chain of approvalChains) {
+      let approverId = null;
+      
+      // Determine approver based on role
+      if (chain.approver_role === 'employee') {
+        approverId = expense.user_id;
+      } else if (chain.approver_role === 'manager') {
+        // For manager role, use the employee's manager
+        if (managerRelationship) {
+          approverId = managerRelationship.manager_id;
+        }
+      } else if (chain.approver_role === 'admin') {
+        // For admin role, find an admin in the company
+        const adminUser = await User.findOne({ 
+          company_id: currentUser.company_id, 
+          role: 'admin' 
+        });
+        if (adminUser) {
+          approverId = adminUser._id;
+        }
+      }
+      
+      // Create approval record if we found an approver
+      if (approverId) {
+        const expenseApproval = new ExpenseApproval({
+          expense_id: expense._id,
+          approver_id: approverId,
+          sequence_order: chain.sequence_order
+        });
+        
+        await expenseApproval.save();
+      }
+    }
+  } catch (error) {
+    console.error('Error creating approval workflow:', error);
+  }
+}
 
 // File upload route for receipt processing
 app.post('/api/expenses/receipt-upload', authenticateToken, upload.single('file'), async (req, res) => {
@@ -712,11 +877,13 @@ app.post('/api/expenses/receipt-upload', authenticateToken, upload.single('file'
 // Company routes
 app.get('/api/company', authenticateToken, async (req, res) => {
   try {
-    const userResult = await pool.query('SELECT company_id FROM users WHERE id = $1', [req.user.userId]);
-    const companyId = userResult.rows[0].company_id;
+    const currentUser = await User.findById(req.user.userId);
+    if (!currentUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
 
-    const companyResult = await pool.query('SELECT * FROM companies WHERE id = $1', [companyId]);
-    res.json(companyResult.rows[0]);
+    const company = await Company.findById(currentUser.company_id);
+    res.json(company);
   } catch (error) {
     console.error('Get company error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -725,17 +892,20 @@ app.get('/api/company', authenticateToken, async (req, res) => {
 
 app.patch('/api/company', authenticateToken, async (req, res) => {
   try {
-    const userResult = await pool.query('SELECT company_id FROM users WHERE id = $1', [req.user.userId]);
-    const companyId = userResult.rows[0].company_id;
+    const currentUser = await User.findById(req.user.userId);
+    if (!currentUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
     
     const { name, country, default_currency } = req.body;
 
-    const companyResult = await pool.query(
-      'UPDATE companies SET name = $1, country = $2, default_currency = $3, updated_at = NOW() WHERE id = $4 RETURNING *',
-      [name, country, default_currency, companyId]
+    const company = await Company.findByIdAndUpdate(
+      currentUser.company_id,
+      { name, country, default_currency, updated_at: new Date() },
+      { new: true }
     );
     
-    res.json(companyResult.rows[0]);
+    res.json(company);
   } catch (error) {
     console.error('Update company error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -745,11 +915,13 @@ app.patch('/api/company', authenticateToken, async (req, res) => {
 // Category routes
 app.get('/api/categories', authenticateToken, async (req, res) => {
   try {
-    const userResult = await pool.query('SELECT company_id FROM users WHERE id = $1', [req.user.userId]);
-    const companyId = userResult.rows[0].company_id;
+    const currentUser = await User.findById(req.user.userId);
+    if (!currentUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
 
-    const categoriesResult = await pool.query('SELECT * FROM expense_categories WHERE company_id = $1', [companyId]);
-    res.json(categoriesResult.rows);
+    const categories = await ExpenseCategory.find({ company_id: currentUser.company_id });
+    res.json(categories);
   } catch (error) {
     console.error('Get categories error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -759,15 +931,19 @@ app.get('/api/categories', authenticateToken, async (req, res) => {
 app.post('/api/categories', authenticateToken, async (req, res) => {
   try {
     const { name } = req.body;
-    const userResult = await pool.query('SELECT company_id FROM users WHERE id = $1', [req.user.userId]);
-    const companyId = userResult.rows[0].company_id;
+    const currentUser = await User.findById(req.user.userId);
+    if (!currentUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
 
-    const categoryResult = await pool.query(
-      'INSERT INTO expense_categories (name, company_id) VALUES ($1, $2) RETURNING *',
-      [name, companyId]
-    );
+    const category = new ExpenseCategory({
+      name,
+      company_id: currentUser.company_id,
+    });
 
-    res.json(categoryResult.rows[0]);
+    await category.save();
+
+    res.json(category);
   } catch (error) {
     console.error('Create category error:', error);
     res.status(500).json({ error: 'Internal server error' });

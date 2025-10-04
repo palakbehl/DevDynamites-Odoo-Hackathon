@@ -3,6 +3,7 @@ import { apiClient } from "@/integrations/api/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { DollarSign, TrendingUp, Users, Clock, AlertTriangle, FileText } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
+import AdminApprovals from "@/components/AdminApprovals";
 
 interface Expense {
   id: string;
@@ -11,18 +12,18 @@ interface Expense {
   status: string;
   expense_date: string;
   created_at: string;
-  category?: string;
+  category_id?: string;
 }
 
 interface User {
   id: string;
   full_name: string;
   email: string;
-  role: string;
+  role?: string;
   created_at: string;
 }
 
-const AdminDashboard = () => {
+const AdminDashboard = ({ user }: { user: any }) => {
   const [stats, setStats] = useState({
     totalExpenses: 0,
     pendingExpenses: 0,
@@ -69,10 +70,10 @@ const AdminDashboard = () => {
           amount: parseFloat(amount.toFixed(2))
         }));
 
-        // Prepare category data
+        // Prepare category data (using category_id instead of category)
         const categoryMap: Record<string, number> = {};
         expenses.forEach(exp => {
-          const category = exp.category || 'Other';
+          const category = exp.category_id || 'Other';
           categoryMap[category] = (categoryMap[category] || 0) + Number(exp.amount);
         });
         
@@ -301,7 +302,7 @@ const AdminDashboard = () => {
                       user.role === 'manager' ? 'bg-blue-100 text-blue-800' :
                       'bg-gray-100 text-gray-800'
                     }`}>
-                      {user.role}
+                      {user.role || 'employee'}
                     </span>
                   </div>
                 ))}

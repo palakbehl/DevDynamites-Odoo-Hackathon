@@ -144,8 +144,12 @@ const ApprovalChainConfig = () => {
   const handleDeleteChain = async (chainId: string) => {
     setLoading(true);
     try {
-      // For now, we'll just remove it from the UI
-      // In a real implementation, you would call an API endpoint to delete the chain
+      const response = await apiClient.deleteApprovalChain(chainId);
+      
+      if (response.error) {
+        throw new Error(response.error);
+      }
+
       setApprovalChains(approvalChains.filter(chain => chain.id !== chainId));
       
       toast({

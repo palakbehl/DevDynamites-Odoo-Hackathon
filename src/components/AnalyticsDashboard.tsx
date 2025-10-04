@@ -247,7 +247,7 @@ const AnalyticsDashboard = () => {
             <DollarSign className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">
+            <div className="text-2xl font-bold whitespace-nowrap">
               ${expenses.reduce((sum, exp) => sum + Number(exp.amount), 0).toFixed(2)}
             </div>
             <p className="text-xs text-muted-foreground">All time</p>
@@ -260,7 +260,7 @@ const AnalyticsDashboard = () => {
             <TrendingUp className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">
+            <div className="text-2xl font-bold whitespace-nowrap">
               ${(expenses.reduce((sum, exp) => sum + Number(exp.amount), 0) / 12).toFixed(2)}
             </div>
             <p className="text-xs text-muted-foreground">Last 12 months</p>
@@ -304,11 +304,19 @@ const AnalyticsDashboard = () => {
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={monthlyExpenseData}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="month" />
+                <XAxis 
+                  dataKey="month" 
+                  tick={{ fontSize: 12 }}
+                  tickMargin={10}
+                />
                 <YAxis />
                 <Tooltip formatter={(value) => [`$${value}`, 'Amount']} />
                 <Legend />
-                <Bar dataKey="amount" fill="#3b82f6" name="Amount ($)" />
+                <Bar 
+                  dataKey="amount" 
+                  fill="#3b82f6" 
+                  name="Amount ($)" 
+                />
               </BarChart>
             </ResponsiveContainer>
           </CardContent>
@@ -354,7 +362,11 @@ const AnalyticsDashboard = () => {
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={dailyExpenseTrend}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="date" />
+                <XAxis 
+                  dataKey="date" 
+                  tick={{ fontSize: 12 }}
+                  tickMargin={10}
+                />
                 <YAxis />
                 <Tooltip formatter={(value) => [`$${value}`, 'Amount']} />
                 <Legend />
@@ -425,12 +437,12 @@ const AnalyticsDashboard = () => {
                     <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center mr-3">
                       <span className="text-primary font-medium">{index + 1}</span>
                     </div>
-                    <div>
-                      <p className="font-medium">{claimer.name}</p>
-                      <p className="text-sm text-muted-foreground">{claimer.count} claims</p>
+                    <div className="min-w-0">
+                      <p className="font-medium truncate">{claimer.name}</p>
+                      <p className="text-sm text-muted-foreground truncate">{claimer.count} claims</p>
                     </div>
                   </div>
-                  <p className="font-bold">${claimer.amount.toFixed(2)}</p>
+                  <p className="font-bold whitespace-nowrap">${claimer.amount.toFixed(2)}</p>
                 </div>
               ))}
             </div>
