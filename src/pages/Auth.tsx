@@ -19,7 +19,6 @@ const Auth = () => {
   const [companyName, setCompanyName] = useState("");
   const [country, setCountry] = useState("");
   const [currency, setCurrency] = useState("USD");
-  const [role, setRole] = useState<"admin" | "manager" | "employee">("employee");
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -193,19 +192,6 @@ const Auth = () => {
                       required
                     />
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="signin-role">Role</Label>
-                    <Select value={role} onValueChange={(value: any) => setRole(value)}>
-                      <SelectTrigger id="signin-role">
-                        <SelectValue placeholder="Select your role" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="employee">Employee</SelectItem>
-                        <SelectItem value="manager">Manager</SelectItem>
-                        <SelectItem value="admin">Admin</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
                   <Button type="submit" className="w-full" disabled={loading}>
                     {loading ? (
                       <span className="flex items-center justify-center">
@@ -219,7 +205,7 @@ const Auth = () => {
                 </form>
                 
                 <div className="mt-4 text-center text-sm text-muted-foreground">
-                  <p>Select your role to access the appropriate dashboard</p>
+                  <p>Access your dashboard based on your assigned role</p>
                 </div>
               </TabsContent>
               
